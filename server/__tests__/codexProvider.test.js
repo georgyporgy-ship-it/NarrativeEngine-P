@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+    CODEX_THREAD_SANDBOX,
     dynamicToolsFromOpenAI,
     normalizeCodexModel,
     responseItems,
 } from '../services/codexProvider.js';
 
 describe('Codex provider adapters', () => {
+    it('uses the app-server sandbox spelling required by thread/start', () => {
+        expect(CODEX_THREAD_SANDBOX).toBe('read-only');
+    });
+
     it('normalizes account-visible models and their exact effort catalogue', () => {
         expect(normalizeCodexModel({
             model: 'gpt-test',

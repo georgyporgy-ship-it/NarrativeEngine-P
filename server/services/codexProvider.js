@@ -7,6 +7,7 @@ import readline from 'node:readline';
 import { spawn } from 'node:child_process';
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+export const CODEX_THREAD_SANDBOX = 'read-only';
 const STARTUP_TIMEOUT_MS = 15_000;
 const REQUEST_THREAD_INSTRUCTION = [
     'Act only as the language model for the supplied roleplay conversation.',
@@ -530,7 +531,7 @@ export class CodexProvider {
                 model: selected.id,
                 cwd,
                 approvalPolicy: 'never',
-                sandbox: 'readOnly',
+                sandbox: CODEX_THREAD_SANDBOX,
                 serviceName: 'narrative-engine',
                 ...(dynamicTools.length ? { dynamicTools } : {}),
             }, { timeoutMs: 30_000 });
