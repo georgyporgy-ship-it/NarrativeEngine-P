@@ -32,6 +32,12 @@ function openAIResponse(result) {
 }
 
 function writeSse(res, payload) {
+    if (!res.headersSent) {
+        res.status(200);
+        res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+    }
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
 }
 
@@ -85,11 +91,6 @@ export function createCodexRouter({ provider = getCodexProvider() } = {}) {
         });
 
         if (request.stream) {
-            res.status(200);
-            res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-            res.setHeader('Cache-Control', 'no-cache, no-transform');
-            res.setHeader('Connection', 'keep-alive');
-            res.flushHeaders?.();
             try {
                 const result = await provider.complete(request, {
                     signal: controller.signal,
@@ -141,6 +142,10 @@ export function createCodexRouter({ provider = getCodexProvider() } = {}) {
                 res.end();
             } catch (err) {
                 if (controller.signal.aborted) return;
+                if (!res.headersSent) {
+                    res.status(errorStatus(err)).json({ error: err.message });
+                    return;
+                }
                 writeSse(res, { error: { message: err.message, type: err.name || 'codex_error' } });
                 res.end();
             }
@@ -158,4 +163,3 @@ export function createCodexRouter({ provider = getCodexProvider() } = {}) {
 
     return router;
 }
-

@@ -441,6 +441,7 @@ export class CodexProvider {
     }
 
     async #completeOnce(request, callbacks) {
+        if (callbacks.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
         const account = await this.account();
         if (!account.authenticated) {
             throw new CodexAuthenticationError('ChatGPT is not signed in through Codex. Open Settings and sign in.');
@@ -459,6 +460,7 @@ export class CodexProvider {
         let reasoning = '';
         let resolveTurn;
         let rejectTurn;
+        let turnTimer;
         const turnDone = new Promise((resolve, reject) => { resolveTurn = resolve; rejectTurn = reject; });
         const dynamicTools = dynamicToolsFromOpenAI(request.tools);
 
@@ -483,9 +485,12 @@ export class CodexProvider {
         };
 
         const onServerRequest = (message, responder) => {
-            if (message.method !== 'item/tool/call') return;
             const params = message.params || {};
             if (params.threadId && threadId && params.threadId !== threadId) return;
+            if (message.method !== 'item/tool/call') {
+                responder.reject(-32601, 'Narrative Engine does not allow interactive Codex requests or built-in tools');
+                return;
+            }
             const name = typeof params.tool === 'string' ? params.tool : params.tool?.name;
             toolCall = {
                 id: params.itemId || params.callId || `call_${Date.now()}`,
@@ -566,10 +571,12 @@ export class CodexProvider {
             const timeoutMs = Number.isFinite(request.timeoutMs) && request.timeoutMs > 0
                 ? request.timeoutMs
                 : DEFAULT_TIMEOUT_MS;
-            const timeout = new Promise((_, reject) => setTimeout(
-                () => reject(new CodexTimeoutError('Timed out waiting for Codex turn completion')),
-                timeoutMs,
-            ));
+            const timeout = new Promise((_, reject) => {
+                turnTimer = setTimeout(
+                    () => reject(new CodexTimeoutError('Timed out waiting for Codex turn completion')),
+                    timeoutMs,
+                );
+            });
             const completed = await Promise.race([turnDone, timeout]);
             if (callbacks.signal?.aborted) throw new DOMException('Aborted', 'AbortError');
             if (!toolCall && completed?.status && completed.status !== 'completed') {
@@ -587,6 +594,7 @@ export class CodexProvider {
                 finishReason: toolCall ? 'tool_calls' : 'stop',
             };
         } finally {
+            if (turnTimer) clearTimeout(turnTimer);
             this.rpc.off('notification', onNotification);
             this.rpc.off('serverRequest', onServerRequest);
             this.rpc.off('transportError', onTransportError);
@@ -605,4 +613,3 @@ export function getCodexProvider() {
     if (!singleton) singleton = new CodexProvider();
     return singleton;
 }
-

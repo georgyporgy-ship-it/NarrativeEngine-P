@@ -72,5 +72,16 @@ describe('Codex routes', () => {
         expect(response.text).toContain('tool_calls');
         expect(response.text).toContain('data: [DONE]');
     });
-});
 
+    it('returns an HTTP error when a streaming request fails before its first event', async () => {
+        const provider = {
+            complete: vi.fn().mockRejectedValue(new Error('ChatGPT is not signed in through Codex')),
+        };
+        const response = await request(appWith(provider))
+            .post('/api/codex/chat/completions')
+            .send({ stream: true, model: 'gpt-test', messages: [{ role: 'user', content: 'Continue.' }] })
+            .expect(401);
+
+        expect(response.body.error).toContain('not signed in');
+    });
+});

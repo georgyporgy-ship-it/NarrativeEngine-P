@@ -156,33 +156,38 @@ export async function sendMessage(
                         const data = trimmed.slice(6);
                         if (data === '[DONE]') continue;
 
+                        let parsed;
                         try {
-                            const parsed = JSON.parse(data);
-                            // DeepSeek/OpenAI emit a trailing chunk (choices:[]) carrying usage
-                            // when stream_options.include_usage is set.
-                            if (parsed.usage) streamUsage = parsed.usage as LLMUsage;
-                            const delta = parsed.choices?.[0]?.delta;
-
-                            if (delta?.content) {
-                                fullText += delta.content;
-                                onChunk(fullText);
-                            }
-
-                            // Capture reasoning — handle both field names seen in the wild
-                            const reasoningDelta: string = delta?.reasoning_content ?? delta?.reasoning ?? '';
-                            if (reasoningDelta) {
-                                reasoningContent += reasoningDelta;
-                                onReasoning?.(reasoningContent);
-                            }
-
-                            if (delta?.tool_calls && delta.tool_calls.length > 0) {
-                                const tc = delta.tool_calls[0];
-                                if (tc.id) tcId = tc.id;
-                                if (tc.function?.name) tcName = tc.function.name;
-                                if (tc.function?.arguments) tcArgs += tc.function.arguments;
-                            }
+                            parsed = JSON.parse(data);
                         } catch {
                             // skip malformed chunks
+                            continue;
+                        }
+                        if (format === 'codex' && parsed.error?.message) {
+                            throw new Error(String(parsed.error.message));
+                        }
+                        // DeepSeek/OpenAI emit a trailing chunk (choices:[]) carrying usage
+                        // when stream_options.include_usage is set.
+                        if (parsed.usage) streamUsage = parsed.usage as LLMUsage;
+                        const delta = parsed.choices?.[0]?.delta;
+
+                        if (delta?.content) {
+                            fullText += delta.content;
+                            onChunk(fullText);
+                        }
+
+                        // Capture reasoning — handle both field names seen in the wild
+                        const reasoningDelta: string = delta?.reasoning_content ?? delta?.reasoning ?? '';
+                        if (reasoningDelta) {
+                            reasoningContent += reasoningDelta;
+                            onReasoning?.(reasoningContent);
+                        }
+
+                        if (delta?.tool_calls && delta.tool_calls.length > 0) {
+                            const tc = delta.tool_calls[0];
+                            if (tc.id) tcId = tc.id;
+                            if (tc.function?.name) tcName = tc.function.name;
+                            if (tc.function?.arguments) tcArgs += tc.function.arguments;
                         }
                     }
                 }
