@@ -1,11 +1,12 @@
-import { useState } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Loader2, CheckCircle, XCircle, ExternalLink, RefreshCw, LogOut } from 'lucide-react';
 import { useAppStore } from '../../store/useAppStore';
 import { testConnection } from '../../services/chatEngine';
 import type { LLMProvider, ApiFormat, ThinkingEffort, ComfyUiSettings } from '../../types';
 import { detectFormatFromEndpoint } from '../../utils/llmApiHelper';
 import { toast } from '../Toast';
 import { uid } from '../../utils/uid';
+import { codexApi, type CodexLogin, type CodexStatus } from '../../services/llm/codexApi';
 
 const COMFY_DEFAULT_ENDPOINT = 'http://127.0.0.1:8188';
 const OPENROUTER_DEFAULT_ENDPOINT = 'https://openrouter.ai/api/v1';
@@ -17,6 +18,7 @@ function getEndpointPlaceholder(apiFormat?: ApiFormat) {
     if (fmt === 'gemini') return 'https://generativelanguage.googleapis.com/v1beta';
     if (fmt === 'comfyui') return COMFY_DEFAULT_ENDPOINT;
     if (fmt === 'openrouter') return OPENROUTER_DEFAULT_ENDPOINT;
+    if (fmt === 'codex') return 'Managed by Codex app-server';
     return 'http://localhost:11434/v1';
 }
 
@@ -26,6 +28,7 @@ function getApiKeyPlaceholder(apiFormat?: ApiFormat) {
     if (fmt === 'claude') return 'sk-ant-...';
     if (fmt === 'gemini') return 'AIza...';
     if (fmt === 'openrouter') return 'sk-or-v1-...';
+    if (fmt === 'codex') return 'No API key required';
     return 'sk-...';
 }
 
@@ -39,8 +42,59 @@ export function ProvidersTab() {
     const [isExpanded, setIsExpanded] = useState(true);
     const [isTesting, setIsTesting] = useState(false);
     const [testResult, setTestResult] = useState<{ ok: boolean; detail: string } | null>(null);
+    const [codexStatus, setCodexStatus] = useState<CodexStatus | null>(null);
+    const [codexLogin, setCodexLogin] = useState<CodexLogin | null>(null);
+    const [codexLoading, setCodexLoading] = useState(false);
 
     const activeProvider = settings.providers.find(p => p.id === activeTab) || settings.providers[0];
+
+    const refreshCodex = async () => {
+        setCodexLoading(true);
+        try {
+            const status = await codexApi.status();
+            setCodexStatus(status);
+            if (status.authenticated) setCodexLogin(null);
+            if (activeProvider?.apiFormat === 'codex' && status.models.length > 0) {
+                const current = status.models.find(model => model.id === activeProvider.modelName);
+                const selected = current || status.models.find(model => model.isDefault) || status.models[0];
+                const efforts = selected.supportedReasoningEfforts;
+                const effort = efforts.includes(activeProvider.codexReasoningEffort || '')
+                    ? activeProvider.codexReasoningEffort
+                    : selected.defaultReasoningEffort || efforts[0];
+                updateProvider(activeProvider.id, {
+                    modelName: selected.id,
+                    codexReasoningEffort: effort || undefined,
+                });
+            }
+        } catch (err) {
+            setCodexStatus({
+                installed: false,
+                authenticated: false,
+                email: null,
+                planType: null,
+                models: [],
+                error: err instanceof Error ? err.message : 'Could not reach the Codex service',
+            });
+        } finally {
+            setCodexLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeProvider?.apiFormat !== 'codex') return;
+        const timer = window.setTimeout(() => { void refreshCodex(); }, 0);
+        return () => window.clearTimeout(timer);
+        // Provider selection is the trigger. Model/effort updates inside refresh
+        // must not recursively fetch the catalogue.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeProvider?.id, activeProvider?.apiFormat]);
+
+    useEffect(() => {
+        if (!codexLogin) return;
+        const timer = window.setInterval(() => { void refreshCodex(); }, 2_000);
+        return () => window.clearInterval(timer);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [codexLogin?.loginId]);
 
     const handleAddProvider = () => {
         const newProvider: LLMProvider = {
@@ -102,8 +156,16 @@ export function ProvidersTab() {
             if (!endpoint || /^https?:\/\/(localhost|127\.0\.0\.1):11434(\/v1)?$/.test(endpoint)) {
                 endpoint = OPENROUTER_DEFAULT_ENDPOINT;
             }
+        } else if (newFormat === 'codex') {
+            endpoint = 'codex://app-server';
+        } else if (endpoint.startsWith('codex://')) {
+            endpoint = 'http://localhost:11434/v1';
         }
-        updateProvider(activeProvider.id, { apiFormat: newFormat, endpoint });
+        updateProvider(activeProvider.id, {
+            apiFormat: newFormat,
+            endpoint,
+            ...(newFormat === 'codex' ? { apiKey: '', streamingEnabled: true } : {}),
+        });
     };
 
     const handleComfyChange = (field: keyof ComfyUiSettings, value: string | number | undefined) => {
@@ -153,6 +215,8 @@ export function ProvidersTab() {
     const config = activeProvider;
     const isComfy = (config?.apiFormat || 'openai') === 'comfyui';
     const isOpenRouter = (config?.apiFormat || 'openai') === 'openrouter';
+    const isCodex = (config?.apiFormat || 'openai') === 'codex';
+    const selectedCodexModel = codexStatus?.models.find(model => model.id === config?.modelName);
 
     return (
         <div data-ui="providers" className="flex flex-col">
@@ -214,7 +278,27 @@ export function ProvidersTab() {
                                         className="w-full bg-surface border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-dim/40 focus:border-terminal focus:outline-none"
                                     />
                                 </div>
-                                <div>
+                                {isCodex && config && (
+                                    <CodexAccountPanel
+                                        status={codexStatus}
+                                        login={codexLogin}
+                                        loading={codexLoading}
+                                        onRefresh={() => { void refreshCodex(); }}
+                                        onLogin={async () => {
+                                            setCodexLoading(true);
+                                            try { setCodexLogin(await codexApi.login()); }
+                                            catch (err) { toast.error(err instanceof Error ? err.message : 'Could not start ChatGPT sign-in'); }
+                                            finally { setCodexLoading(false); }
+                                        }}
+                                        onLogout={async () => {
+                                            setCodexLoading(true);
+                                            try { await codexApi.logout(); setCodexLogin(null); await refreshCodex(); }
+                                            catch (err) { toast.error(err instanceof Error ? err.message : 'Could not sign out'); }
+                                            finally { setCodexLoading(false); }
+                                        }}
+                                    />
+                                )}
+                                {!isCodex && <div>
                                     <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">API Endpoint</label>
                                     <input
                                         type="text"
@@ -229,11 +313,11 @@ export function ProvidersTab() {
                                             Local: <span className="font-mono">http://localhost:11434</span> &middot; Cloud: <span className="font-mono">https://ollama.com</span> (needs API key)
                                         </p>
                                     )}
-                                </div>
+                                </div>}
                                 <div className="xl:col-span-2">
                                     <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">API Format</label>
                                     <div data-ui="seg" className="flex border border-border overflow-hidden rounded">
-                                        {(['openai', 'ollama', 'claude', 'gemini', 'comfyui', 'openrouter'] as ApiFormat[]).map(fmt => (
+                                        {(['openai', 'ollama', 'claude', 'gemini', 'codex', 'comfyui', 'openrouter'] as ApiFormat[]).map(fmt => (
                                             <button
                                                 key={fmt}
                                                 onClick={() => handleApiFormatChange(fmt)}
@@ -242,7 +326,7 @@ export function ProvidersTab() {
                                                     : 'bg-void text-text-dim hover:text-text-primary'
                                                 }`}
                                             >
-                                                {fmt === 'openai' ? 'OpenAI' : fmt === 'ollama' ? 'Ollama' : fmt === 'claude' ? 'Claude' : fmt === 'gemini' ? 'Gemini' : fmt === 'comfyui' ? 'ComfyUI' : 'OpenRouter'}
+                                                {fmt === 'openai' ? 'OpenAI' : fmt === 'ollama' ? 'Ollama' : fmt === 'claude' ? 'Claude' : fmt === 'gemini' ? 'Gemini' : fmt === 'codex' ? 'ChatGPT / Codex' : fmt === 'comfyui' ? 'ComfyUI' : 'OpenRouter'}
                                             </button>
                                         ))}
                                     </div>
@@ -254,13 +338,33 @@ export function ProvidersTab() {
                                 </div>
                                 <div>
                                     <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">{isComfy ? 'Checkpoint Model Name' : 'Model Name'}</label>
-                                    <input
-                                        type="text"
-                                        value={config.modelName}
-                                        onChange={(e) => handleFieldChange('modelName', e.target.value)}
-                                        placeholder={isComfy ? 'sd_xl_base_1.0.safetensors' : isOpenRouter ? 'google/gemini-2.5-flash-image' : 'llama3'}
-                                        className="w-full bg-surface border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-dim/40 font-mono focus:border-terminal focus:outline-none"
-                                    />
+                                    {isCodex ? (
+                                        <select
+                                            value={config.modelName}
+                                            onChange={(e) => {
+                                                const model = codexStatus?.models.find(item => item.id === e.target.value);
+                                                handleFieldChange('modelName', e.target.value);
+                                                updateProvider(config.id, {
+                                                    codexReasoningEffort: model?.defaultReasoningEffort || model?.supportedReasoningEfforts[0] || undefined,
+                                                });
+                                            }}
+                                            disabled={!codexStatus?.authenticated || !codexStatus.models.length}
+                                            className="w-full bg-surface border border-border px-3 py-2 text-sm text-text-primary font-mono focus:border-terminal focus:outline-none disabled:opacity-50"
+                                        >
+                                            {!codexStatus?.models.length && <option value={config.modelName}>{config.modelName || 'Sign in to load models'}</option>}
+                                            {codexStatus?.models.map(model => (
+                                                <option key={model.id} value={model.id}>{model.displayName} ({model.id})</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <input
+                                            type="text"
+                                            value={config.modelName}
+                                            onChange={(e) => handleFieldChange('modelName', e.target.value)}
+                                            placeholder={isComfy ? 'sd_xl_base_1.0.safetensors' : isOpenRouter ? 'google/gemini-2.5-flash-image' : 'llama3'}
+                                            className="w-full bg-surface border border-border px-3 py-2 text-sm text-text-primary placeholder:text-text-dim/40 font-mono focus:border-terminal focus:outline-none"
+                                        />
+                                    )}
                                     {isComfy && (
                                         <p className="text-[10px] text-text-dim mt-1">Checkpoint filename as it appears in ComfyUI's <span className="font-mono">CheckpointLoaderSimple</span>. Used by the built-in graph; ignored if your custom workflow sets its own checkpoint.</p>
                                     )}
@@ -272,7 +376,7 @@ export function ProvidersTab() {
                                         onNumberChange={handleComfyNumberChange}
                                     />
                                 )}
-                                {!isComfy && (
+                                {!isComfy && !isCodex && (
                                     <div>
                                         <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">API Key</label>
                                         <input
@@ -284,7 +388,7 @@ export function ProvidersTab() {
                                         />
                                     </div>
                                 )}
-                                {!isComfy && (
+                                {!isComfy && !isCodex && (
                                     <div className="flex items-center justify-between gap-3 py-2">
                                         <label className="text-[11px] text-text-dim uppercase tracking-wider truncate">Enable Streaming</label>
                                         <button
@@ -296,7 +400,7 @@ export function ProvidersTab() {
                                         </button>
                                     </div>
                                 )}
-                                {!isComfy && (
+                                {!isComfy && !isCodex && (
                                     <div>
                                         <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1" title="Requests reasoning from the model when supported. 'Max' maps to xhigh on OpenAI, max on DeepSeek V4, HIGH on Gemini.">
                                             Thinking effort
@@ -318,7 +422,29 @@ export function ProvidersTab() {
                                         </div>
                                     </div>
                                 )}
-                                {!isComfy && (
+                                {isCodex && (
+                                    <div>
+                                        <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">Thinking effort</label>
+                                        <div data-ui="seg" className="flex border border-border overflow-hidden rounded">
+                                            {(selectedCodexModel?.supportedReasoningEfforts || []).map(level => (
+                                                <button
+                                                    key={level}
+                                                    onClick={() => handleFieldChange('codexReasoningEffort', level)}
+                                                    className={`flex-1 px-2 py-1.5 text-[9px] uppercase tracking-wider transition-colors focus:outline-none ${config.codexReasoningEffort === level
+                                                        ? 'bg-terminal text-void font-bold'
+                                                        : 'bg-void text-text-dim hover:text-text-primary'
+                                                    }`}
+                                                >
+                                                    {level}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {!selectedCodexModel?.supportedReasoningEfforts.length && (
+                                            <p className="text-[10px] text-text-dim mt-1">The selected model did not advertise configurable reasoning levels.</p>
+                                        )}
+                                    </div>
+                                )}
+                                {!isComfy && !isCodex && (
                                     <div>
                                         <label className="block text-[11px] text-text-dim uppercase tracking-wider mb-1">
                                             Output ceiling
@@ -371,6 +497,87 @@ export function ProvidersTab() {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+function CodexAccountPanel({
+    status,
+    login,
+    loading,
+    onRefresh,
+    onLogin,
+    onLogout,
+}: {
+    status: CodexStatus | null;
+    login: CodexLogin | null;
+    loading: boolean;
+    onRefresh: () => void;
+    onLogin: () => void;
+    onLogout: () => void;
+}) {
+    const statusText = !status
+        ? 'Checking Codex...'
+        : !status.installed
+            ? 'Codex CLI is not installed or not on PATH'
+            : status.authenticated
+                ? `Signed in${status.email ? ` as ${status.email}` : ''}${status.planType ? ` (${status.planType})` : ''}`
+                : 'Not signed in with ChatGPT';
+
+    return (
+        <div className="xl:col-span-1 border border-terminal/20 bg-terminal/5 rounded px-3 py-3">
+            <div className="flex items-center justify-between gap-3">
+                <div>
+                    <div className="text-[11px] text-terminal uppercase tracking-wider font-bold">ChatGPT / Codex OAuth</div>
+                    <div className="text-xs text-text-primary mt-1">{statusText}</div>
+                </div>
+                {loading && <Loader2 size={16} className="animate-spin text-terminal shrink-0" />}
+            </div>
+            {status?.error && <p className="text-[10px] text-danger mt-2">{status.error}</p>}
+            <p className="text-[10px] text-text-dim mt-2 leading-relaxed">
+                Authentication, token refresh, and credentials are managed by the official Codex CLI. Narrative Engine never reads the Codex credential file.
+            </p>
+            {login && (
+                <div className="mt-3 border border-border bg-void px-3 py-2 text-xs">
+                    <div className="text-text-dim">Open the sign-in page and enter this code:</div>
+                    <div className="font-mono text-terminal text-base tracking-widest my-2 select-all">{login.userCode}</div>
+                    <a
+                        href={login.verificationUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-terminal hover:underline"
+                    >
+                        Open ChatGPT sign-in <ExternalLink size={12} />
+                    </a>
+                </div>
+            )}
+            <div className="flex flex-wrap gap-2 mt-3">
+                {!status?.authenticated && (
+                    <button
+                        onClick={onLogin}
+                        disabled={loading || status?.installed === false}
+                        className="bg-terminal text-void text-[10px] uppercase tracking-wider font-bold px-3 py-2 disabled:opacity-40"
+                    >
+                        Sign in with ChatGPT
+                    </button>
+                )}
+                {status?.authenticated && (
+                    <button
+                        onClick={onLogout}
+                        disabled={loading}
+                        className="inline-flex items-center gap-1 bg-void border border-border text-text-dim text-[10px] uppercase tracking-wider px-3 py-2 disabled:opacity-40"
+                    >
+                        <LogOut size={12} /> Sign out
+                    </button>
+                )}
+                <button
+                    onClick={onRefresh}
+                    disabled={loading || status?.installed === false}
+                    className="inline-flex items-center gap-1 bg-void border border-border text-text-dim text-[10px] uppercase tracking-wider px-3 py-2 disabled:opacity-40"
+                >
+                    <RefreshCw size={12} /> Refresh
+                </button>
+            </div>
         </div>
     );
 }

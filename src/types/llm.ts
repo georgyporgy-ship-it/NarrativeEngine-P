@@ -2,7 +2,7 @@
 
 import type { LocaleCode } from '../i18n/types';
 
-export type ApiFormat = 'openai' | 'ollama' | 'claude' | 'gemini' | 'comfyui' | 'openrouter';
+export type ApiFormat = 'openai' | 'ollama' | 'claude' | 'gemini' | 'comfyui' | 'openrouter' | 'codex';
 
 /**
  * Native ComfyUI image-generation settings (scene images only). Attached to an
@@ -29,6 +29,9 @@ export type EndpointConfig = {
     modelName: string;
     apiFormat?: ApiFormat;
     thinkingEffort?: ThinkingEffort;
+    /** Exact effort id reported by Codex model/list. Kept separate because the
+     * generic five-step scale intentionally maps values for other providers. */
+    codexReasoningEffort?: string;
     /** The endpoint's maximum output tokens per response. Optional — unset means unknown,
      * and the thinking reserve stays conservative (see WORKORDER-thinking-token-floor §3.2).
      * This is an OUTPUT ceiling, not a context window; they are different and much different sizes. */
@@ -66,6 +69,8 @@ export type LLMProvider = {
     streamingEnabled?: boolean;
     apiFormat?: ApiFormat;
     thinkingEffort?: ThinkingEffort;
+    /** Exact effort id reported by Codex model/list for this selected model. */
+    codexReasoningEffort?: string;
     /** The endpoint's maximum output tokens per response. Optional — unset means unknown,
      * and the thinking reserve stays conservative (see WORKORDER-thinking-token-floor §3.2).
      * This is an OUTPUT ceiling, not a context window; they are different and much different sizes. */
