@@ -9,6 +9,12 @@ import { API_BASE } from '../../lib/apiBase';
  * which is exactly what the proxy forwards.
  */
 export async function llmFetch(target: string, init?: RequestInit): Promise<Response> {
+    // Codex is a first-party local backend route, not an arbitrary upstream URL.
+    // Calling it directly avoids feeding a relative URL to the SSRF-hardened proxy
+    // and keeps ChatGPT OAuth credentials entirely inside codex app-server.
+    if (target.startsWith('/api/codex/') || /^https?:\/\/(localhost|127\.0\.0\.1):3001\/api\/codex\//.test(target)) {
+        return fetch(target, init);
+    }
     return fetch(`${API_BASE}/llm/proxy`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

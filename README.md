@@ -40,7 +40,7 @@ No cloud. No subscription. Your campaigns stay on your machine.
 
 3. **Open your browser** at `http://localhost:5173`
 
-4. **Configure your LLM** — open Settings and add your API key + endpoint. Supports OpenAI, Ollama, DeepSeek, and any OpenAI-compatible API.
+4. **Configure your LLM** — open Settings and add an API endpoint, or choose Codex and sign in with ChatGPT. Supports OpenAI, ChatGPT/Codex OAuth, Ollama, DeepSeek, and any OpenAI-compatible API.
 
 That's it. Create a campaign, write your world lore, and start playing.
 
@@ -346,6 +346,17 @@ Any OpenAI-compatible API works. Configure up to 5 endpoints per preset:
 Each endpoint has its own model, API key, base URL, and sampling config (temperature, top-p, max tokens). Thinking/reasoning effort is supported where the provider offers it.
 
 Works with Ollama for fully local play — no internet required after setup.
+
+### ChatGPT / Codex OAuth
+
+Narrative Engine can use the models available to your ChatGPT account through the official Codex CLI, without asking for an OpenAI API key.
+
+1. Install the Codex CLI: `npm install -g @openai/codex`
+2. Open **Settings → Providers**, add a provider, and choose **ChatGPT / Codex OAuth** as its API format.
+3. Select **Sign in with ChatGPT**, then open the displayed verification link and enter the device code.
+4. After sign-in, choose from the models and exact reasoning levels returned for your account.
+
+The server launches `codex app-server` locally and delegates authentication storage to Codex. Narrative Engine does not receive or persist your OAuth tokens. Set `CODEX_BINARY` to an explicit executable path if `codex` is not available on the server process's `PATH`.
 
 ---
 

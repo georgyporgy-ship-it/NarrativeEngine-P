@@ -1,4 +1,5 @@
 import type { EndpointConfig, ProviderConfig, ApiFormat, SamplingConfig, ThinkingEffort } from '../types';
+import { API_BASE } from '../lib/apiBase';
 
 type AnyProvider = EndpointConfig | ProviderConfig;
 
@@ -75,6 +76,7 @@ export function detectFormatFromEndpoint(endpoint: string): ApiFormat | null {
 }
 
 export function getBaseUrl(provider: AnyProvider): string {
+    if (getApiFormat(provider) === 'codex') return `${API_BASE}/codex`;
     let base = provider.endpoint.replace(/\/+$/, '');
     const format = getApiFormat(provider);
     if ((format === 'openai' || format === 'claude') && isBareHost(base)) {
@@ -86,6 +88,7 @@ export function getBaseUrl(provider: AnyProvider): string {
 export function getChatUrl(provider: AnyProvider, options?: { stream?: boolean }): string {
     const base = getBaseUrl(provider);
     const format = getApiFormat(provider);
+    if (format === 'codex') return `${base}/chat/completions`;
     if (format === 'ollama') return `${base}/api/chat`;
     if (format === 'claude') return `${base}/messages`;
     if (format === 'gemini') {
@@ -101,6 +104,7 @@ export function getChatUrl(provider: AnyProvider, options?: { stream?: boolean }
 export function getModelsUrl(provider: AnyProvider): string {
     const base = getBaseUrl(provider);
     const format = getApiFormat(provider);
+    if (format === 'codex') return `${base}/models`;
     if (format === 'ollama') return `${base}/api/tags`;
     if (format === 'gemini') return `${base}/models`;
     if (format === 'claude') return `${base}/models`;
@@ -110,6 +114,7 @@ export function getModelsUrl(provider: AnyProvider): string {
 export function buildChatHeaders(provider: AnyProvider): Record<string, string> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const format = getApiFormat(provider);
+    if (format === 'codex') return headers;
     if (format === 'claude') {
         if (provider.apiKey) {
             headers['x-api-key'] = provider.apiKey;
@@ -348,6 +353,11 @@ export function buildChatBody(
         stream,
     };
 
+    if (format === 'codex') {
+        const codexEffort = (provider as EndpointConfig).codexReasoningEffort;
+        if (codexEffort) body.reasoning_effort = codexEffort;
+    }
+
     // Ask OpenAI-compatible providers to emit a final usage chunk while streaming
     // (DeepSeek reports prompt-cache hit/miss here). Harmless for servers that
     // ignore it; skipped for Ollama which has its own usage fields.
@@ -378,7 +388,7 @@ export function buildChatBody(
         if (s.dry_allowed_length !== undefined) body.dry_allowed_length = s.dry_allowed_length;
     }
 
-    if (effort && effort !== 'off') {
+    if (format !== 'codex' && effort && effort !== 'off') {
         if (isOllama) {
             const ollamaThinkBudget: Record<ThinkingEffort, number | undefined> = {
                 off: undefined, low: 2048, medium: 2048, high: 8192, max: 8192
